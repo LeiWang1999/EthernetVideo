@@ -1,82 +1,49 @@
 import socket
 import cv2
 import numpy as np
+from PIL import Image
 
 IM_X = 640
 IM_Y = 480
-def ProcessImageRGB (im_to_show, im_array):
-    mask = [0X1F, 0X7E0, 0XF800]
-    shift = [0, 5, 11]
-    mul = [int(255/31), int(255/63), int(255/31)]
-    for i in range(3):
-        im_to_show[:,:,i] = ((im_array & mask[i]) >> shift[i]) * mul[i]
-
-
+IM_CHANNEL = 3
+HEADER_BYTES = 4
+BODY_BYTES = IM_X * 3
+PACKAGESIZE = BODY_BYTES+HEADER_BYTES
 def main():
     # Create a UDP socket
-    
+    image_array = np.zeros((IM_X,IM_Y,IM_CHANNEL),np.int8)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM )
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536*4096)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, True)
-    
-    sock.setblocking(True)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+    sock.setblocking(0)
     
     port = 8080
     ip = '192.168.1.200'
-        
-    sock.bind((ip,port))
-    im_cnt = 0
-    line_cnt = 0
-    
+    sock.bind((ip, port))
+    win_name = "UDP Video"
     while(True):
-        data = sock.recv(65536)
-        cur_line = int.from_bytes(data[0:4],'little', signed=False)
-        print(cur_line)
-        if ((data[0] == 0xAA) or (data[0] == 0xBB)):
-            if (im_type == 0):
-                PAC_PER_FRAME = data[5] + (data[6] << 8)
-                PACK_PER_LINE = int(PAC_PER_FRAME / IM_Y)
-                seg_len = int(IM_X / PACK_PER_LINE)
-                if (data[0] == 0xAA):
-                    im_array = np.zeros((IM_Y,IM_X),np.uint8)
-                    im_type = 1
-                    win_name = "FPGA video - " + str(IM_X) + "x" + str(IM_Y) + " grayscale"
-                elif (data[0] == 0xBB):
-                    im_array = np.zeros((IM_Y,IM_X),np.uint16)
-                    im_to_show = np.zeros((IM_Y,IM_X,3),np.uint8)
-                    im_type = 2
-                    win_name = "FPGA video - " + str(IM_X) + "x" + str(IM_Y) + " RGB"
-            PAC_CNT = (data[7] + (data[8] << 8))
-            line_cnt = int(PAC_CNT / PACK_PER_LINE)
-            offset = int(PAC_CNT % PACK_PER_LINE)
-            seg_pointer = int(offset*seg_len)
+        try:
+            data = sock.recv(65536)
+        except:
+            continue
+        cur_line = int.from_bytes(data[0:HEADER_BYTES],'little', signed=False)
+        # Receice one line rgb data, update image_array
+        if cur_line < 0 or cur_line >= IM_Y:
+            continue
+        for col in range(IM_X):
+            color_location = HEADER_BYTES + col * IM_CHANNEL
+            image_array[col][cur_line][2] = data[color_location]
+            image_array[col][cur_line][1] = data[color_location+1]
+            image_array[col][cur_line][0] = data[color_location+2]
             
-            if (im_type == 1):
-                im_array[line_cnt,seg_pointer:seg_pointer + seg_len] = np.frombuffer(data[9:], dtype=np.uint8);
-            elif (im_type == 2):
-                im_array[line_cnt,seg_pointer:seg_pointer + seg_len] = np.frombuffer(data[9:], dtype=np.uint16);
-            
-                
-        if (line_cnt == IM_Y - 1):
-            if (im_type == 1):
-                im_to_show = im_array
-            elif (im_type == 2):
-                ProcessImageRGB(im_to_show, im_array)
-                            
-            cv2.imshow(win_name, im_to_show)
-                    
-            key = cv2.waitKey(1)
         
-            if key == ord('s'):
-                filename = "Img_" + str(im_cnt)+".bmp"
-                im_to_save = np.array(im_to_show).copy()
-                cv2.imwrite(filename,im_to_save)
-                im_cnt += 1
-                print ("Saved image " + filename)
+        # If current line == endline update image.                
+        if (cur_line == IM_Y - 1):
+            cv2.imshow(win_name,image_array)
+                                
+            key = cv2.waitKey(1)
             
             if key == ord('q'):
                 break
-            
     print("The client is quitting.")
     sock.close()
     cv2.destroyAllWindows()
